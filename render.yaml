@@ -8,4 +8,4 @@ services:
     plan: free
     envVars:
       - key: ALLOWED_ORIGINS
-        value: "*"
+        value: "https://frontend-79aa7ysu3-niwa-yuzukis-projects.vercel.app,http://localhost:3000"
