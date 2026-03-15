@@ -3,9 +3,10 @@ import json
 import tempfile
 import subprocess
 import base64
+import secrets
 import numpy as np
 import librosa
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
@@ -70,6 +71,10 @@ def download_youtube_audio(url: str, output_path: str) -> None:
         "--no-playlist",
         "--user-agent", user_agent,
     ]
+
+    # Cookieファイルが存在する場合は渡す
+    if os.path.exists(COOKIES_PATH):
+        base_args += ["--cookies", COOKIES_PATH]
 
     # 複数のクライアントを試す（ボット検出を回避しやすい順）
     client_options = [
@@ -303,4 +308,34 @@ async def search_youtube(q: str, count: int = 10):
 
 @app.get("/api/health")
 async def health():
-    return {"status": "ok"}
+    cookie_status = "loaded" if os.path.exists(COOKIES_PATH) else "not_set"
+    return {"status": "ok", "cookies": cookie_status}
+
+
+class CookiesUpdateRequest(BaseModel):
+    cookies_b64: str  # Netscape形式のcookies.txtをbase64エンコードしたもの
+
+
+@app.post("/api/admin/cookies")
+async def update_cookies(
+    request: CookiesUpdateRequest,
+    authorization: Optional[str] = Header(None),
+):
+    """Cookie認証ファイルを更新する（要: ADMIN_SECRETヘッダー）"""
+    admin_secret = os.environ.get("ADMIN_SECRET")
+    if not admin_secret:
+        raise HTTPException(status_code=503, detail="管理機能が無効です（ADMIN_SECRETが未設定）")
+
+    expected = f"Bearer {admin_secret}"
+    if not authorization or not secrets.compare_digest(authorization, expected):
+        raise HTTPException(status_code=401, detail="認証に失敗しました")
+
+    try:
+        decoded = base64.b64decode(request.cookies_b64).decode("utf-8")
+    except Exception:
+        raise HTTPException(status_code=400, detail="cookies_b64のデコードに失敗しました")
+
+    with open(COOKIES_PATH, "w") as f:
+        f.write(decoded)
+
+    return {"status": "ok", "message": "Cookieを更新しました"}

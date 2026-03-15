@@ -9,3 +9,7 @@ services:
     envVars:
       - key: ALLOWED_ORIGINS
         value: "*"
+      - key: YT_COOKIES_B64
+        sync: false  # Renderのダッシュボードで手動設定（Netscape形式cookies.txtをbase64エンコード）
+      - key: ADMIN_SECRET
+        generateValue: true  # 管理API認証用シークレット（Renderが自動生成）
