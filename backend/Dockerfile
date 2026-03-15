@@ -7,7 +7,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh
 ENV PATH="/usr/local/bin:${PATH}"
 
-RUN pip install --no-cache-dir yt-dlp
+RUN pip install --no-cache-dir --upgrade yt-dlp
 
 WORKDIR /app
 COPY requirements.txt .

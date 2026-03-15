@@ -35,6 +35,13 @@ def get_env():
 
 def download_youtube_audio(url: str, output_path: str) -> None:
     """YouTubeから音声をダウンロードする（複数クライアントでリトライ）"""
+    # ボット検出を回避するためリアルなUser-Agentを設定
+    user_agent = (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/131.0.0.0 Safari/537.36"
+    )
+
     base_args = [
         YT_DLP_PATH,
         "-x",
@@ -42,10 +49,14 @@ def download_youtube_audio(url: str, output_path: str) -> None:
         "--audio-quality", "0",
         "-o", output_path,
         "--no-playlist",
+        "--user-agent", user_agent,
     ]
 
-    # 複数のクライアントを試す
+    # 複数のクライアントを試す（ボット検出を回避しやすい順）
     client_options = [
+        ["--extractor-args", "youtube:player_client=ios"],
+        ["--extractor-args", "youtube:player_client=tv_embedded"],
+        ["--extractor-args", "youtube:player_client=mweb"],
         ["--extractor-args", "youtube:player_client=web"],
         [],  # デフォルト（フォールバック）
     ]
