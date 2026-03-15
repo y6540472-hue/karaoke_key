@@ -37,6 +37,13 @@ def get_env():
 
 def download_youtube_audio(url: str, output_path: str) -> None:
     """YouTubeから音声をダウンロードする（複数クライアントでリトライ）"""
+    # ボット検出を回避するためリアルなUser-Agentを設定
+    user_agent = (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/131.0.0.0 Safari/537.36"
+    )
+
     base_args = [
         YT_DLP_PATH,
         "-x",
@@ -44,10 +51,14 @@ def download_youtube_audio(url: str, output_path: str) -> None:
         "--audio-quality", "0",
         "-o", output_path,
         "--no-playlist",
+        "--user-agent", user_agent,
     ]
 
-    # 複数のクライアントを試す
+    # 複数のクライアントを試す（ボット検出を回避しやすい順）
     client_options = [
+        ["--extractor-args", "youtube:player_client=ios"],
+        ["--extractor-args", "youtube:player_client=tv_embedded"],
+        ["--extractor-args", "youtube:player_client=mweb"],
         ["--extractor-args", "youtube:player_client=web"],
         [],  # デフォルト（フォールバック）
     ]
@@ -85,6 +96,7 @@ def download_youtube_audio(url: str, output_path: str) -> None:
 
 class YouTubeRequest(BaseModel):
     url: str
+    section: Optional[str] = "intro"  # "intro" or "chorus"
 
 
 class SearchRequest(BaseModel):
@@ -125,6 +137,7 @@ class PitchResult(BaseModel):
     key: KeyResult
     pitches: list[PitchPoint]
     duration: float
+    start_time: float = 0.0
 
 
 def detect_key(audio_path: str) -> KeyResult:
@@ -184,9 +197,37 @@ def midi_to_note_name(midi_num: float) -> str:
     return f"{NOTE_NAMES[note_idx]}{octave}"
 
 
-def detect_pitch_timeline(audio_path: str, max_duration: float = 30.0) -> PitchResult:
+def detect_chorus_start(audio_path: str) -> float:
+    """曲のサビ開始位置を推定する（秒）"""
+    y, sr = librosa.load(audio_path, sr=22050)
+    # RMS（音量）の変化からサビを推定
+    rms = librosa.feature.rms(y=y)[0]
+    times = librosa.times_like(rms, sr=sr)
+
+    # 音量が全体平均より高い区間を探す
+    threshold = np.mean(rms) * 1.2
+    loud_sections = times[rms > threshold]
+
+    if len(loud_sections) > 0:
+        # 最初の盛り上がり（イントロ直後を避けるため10秒以降）
+        candidates = loud_sections[loud_sections > 10.0]
+        if len(candidates) > 0:
+            return float(candidates[0])
+
+    # 見つからなければ曲の1/3あたりを返す
+    total_duration = float(len(y) / sr)
+    return min(total_duration * 0.3, 60.0)
+
+
+def detect_pitch_timeline(
+    audio_path: str, max_duration: float = 30.0, start_time: float = 0.0
+) -> PitchResult:
     """音声からピッチの時系列データを抽出する"""
-    y, sr = librosa.load(audio_path, sr=22050, duration=max_duration)
+    y_full, sr = librosa.load(audio_path, sr=22050)
+    total_samples = len(y_full)
+    start_sample = int(start_time * sr)
+    end_sample = min(start_sample + int(max_duration * sr), total_samples)
+    y = y_full[start_sample:end_sample]
     duration = float(len(y) / sr)
 
     # pYINでピッチ検出（声に特化した手法）
@@ -214,7 +255,10 @@ def detect_pitch_timeline(audio_path: str, max_duration: float = 30.0) -> PitchR
             pitches.append(PitchPoint(time=t))
 
     key = detect_key(audio_path)
-    return PitchResult(key=key, pitches=pitches, duration=round(duration, 2))
+    return PitchResult(
+        key=key, pitches=pitches, duration=round(duration, 2),
+        start_time=round(start_time, 2),
+    )
 
 
 def calculate_semitone_diff(original: KeyResult, user: KeyResult) -> int:
@@ -341,7 +385,12 @@ async def pitch_youtube(request: YouTubeRequest):
             raise HTTPException(status_code=500, detail="音声ファイルが見つかりません")
 
         actual_path = os.path.join(tmpdir, actual_files[0])
-        return detect_pitch_timeline(actual_path)
+
+        start_time = 0.0
+        if request.section == "chorus":
+            start_time = detect_chorus_start(actual_path)
+
+        return detect_pitch_timeline(actual_path, start_time=start_time)
 
 
 @app.post("/api/pitch-voice", response_model=PitchResult)

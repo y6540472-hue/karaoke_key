@@ -12,6 +12,7 @@ type PitchBarProps = {
   duration: number;
   color?: string;
   label?: string;
+  startTime?: number;
 };
 
 type PitchCompareProps = {
@@ -25,6 +26,7 @@ export function PitchBar({
   duration,
   color = "#a855f7",
   label = "",
+  startTime = 0,
 }: PitchBarProps) {
   const voiced = pitches.filter((p) => p.midi !== null);
   if (voiced.length === 0) return null;
@@ -87,6 +89,23 @@ export function PitchBar({
             );
           })}
         </svg>
+      </div>
+      {/* 時間ラベル */}
+      <div className="relative w-full h-4 mt-1">
+        {Array.from({ length: Math.floor(duration / 10) + 1 }, (_, i) => {
+          const sec = i * 10;
+          const left = (sec / duration) * 100;
+          if (left > 100) return null;
+          return (
+            <span
+              key={sec}
+              className="absolute text-[9px] text-zinc-500 -translate-x-1/2"
+              style={{ left: `${left}%` }}
+            >
+              {Math.round(startTime + sec)}秒
+            </span>
+          );
+        })}
       </div>
     </div>
   );
@@ -178,6 +197,23 @@ export function PitchCompare({ original, user }: PitchCompareProps) {
             );
           })}
         </svg>
+      </div>
+      {/* 時間ラベル */}
+      <div className="relative w-full h-4 mt-1">
+        {Array.from({ length: Math.floor(maxDuration / 10) + 1 }, (_, i) => {
+          const sec = i * 10;
+          const left = (sec / maxDuration) * 100;
+          if (left > 100) return null;
+          return (
+            <span
+              key={sec}
+              className="absolute text-[9px] text-zinc-500 -translate-x-1/2"
+              style={{ left: `${left}%` }}
+            >
+              {sec}秒
+            </span>
+          );
+        })}
       </div>
     </div>
   );

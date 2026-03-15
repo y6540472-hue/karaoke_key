@@ -16,6 +16,7 @@ type PitchResult = {
   key: KeyResult;
   pitches: PitchPoint[];
   duration: number;
+  start_time: number;
 };
 
 type KeyResult = {
@@ -55,6 +56,7 @@ export default function Home() {
   const [analyzingYoutube, setAnalyzingYoutube] = useState(false);
   const [selectedSong, setSelectedSong] = useState<SearchResult | null>(null);
 
+  const [pitchSection, setPitchSection] = useState<"intro" | "chorus">("intro");
   const [songPitch, setSongPitch] = useState<PitchResult | null>(null);
 
   const [voiceKey, setVoiceKey] = useState<KeyResult | null>(null);
@@ -73,6 +75,8 @@ export default function Home() {
   const [compareSearchResults, setCompareSearchResults] = useState<SearchResult[]>([]);
   const [compareSearching, setCompareSearching] = useState(false);
   const [compareSearchCount, setCompareSearchCount] = useState(10);
+  const [originalPitch, setOriginalPitch] = useState<PitchResult | null>(null);
+  const [coverPitch, setCoverPitch] = useState<PitchResult | null>(null);
   const [compareTarget, setCompareTarget] = useState<"original" | "cover">("original");
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -120,7 +124,7 @@ export default function Home() {
       const res = await fetch(`${API_BASE}/api/pitch-youtube`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url }),
+        body: JSON.stringify({ url, section: pitchSection }),
       });
       if (!res.ok) {
         const data = await res.json();
@@ -144,11 +148,56 @@ export default function Home() {
     }
   };
 
+  // 比較タブ用: キー解析 + ピッチ取得を同時に行う
+  const analyzeWithPitchForCompare = async (
+    url: string,
+    setLoading: (v: boolean) => void,
+    setKeyResult: (v: KeyResult | null) => void,
+    setPitchResult: (v: PitchResult | null) => void
+  ) => {
+    if (!url.trim()) return;
+    setError("");
+    setLoading(true);
+    setKeyResult(null);
+    setPitchResult(null);
+
+    try {
+      const [keyRes, pitchRes] = await Promise.all([
+        fetch(`${API_BASE}/api/analyze-youtube`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url }),
+        }),
+        fetch(`${API_BASE}/api/pitch-youtube`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url }),
+        }),
+      ]);
+
+      if (!keyRes.ok) {
+        const data = await keyRes.json();
+        throw new Error(data.detail || "キー解析に失敗しました");
+      }
+      const keyData: KeyResult = await keyRes.json();
+      setKeyResult(keyData);
+
+      if (pitchRes.ok) {
+        const pitchData: PitchResult = await pitchRes.json();
+        setPitchResult(pitchData);
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "エラーが発生しました");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   // URLペースト時の自動解析（比較タブ - 原曲）
   const handleOriginalUrlChange = (value: string) => {
     setOriginalUrl(value);
     if (isYoutubeUrl(value)) {
-      analyzeUrl(value, setAnalyzingOriginal, setOriginalKey);
+      analyzeWithPitchForCompare(value, setAnalyzingOriginal, setOriginalKey, setOriginalPitch);
     }
   };
 
@@ -156,7 +205,7 @@ export default function Home() {
   const handleCoverUrlChange = (value: string) => {
     setCoverUrl(value);
     if (isYoutubeUrl(value)) {
-      analyzeUrl(value, setAnalyzingCover, setCoverKey);
+      analyzeWithPitchForCompare(value, setAnalyzingCover, setCoverKey, setCoverPitch);
     }
   };
 
@@ -211,13 +260,13 @@ export default function Home() {
     if (compareTarget === "original") {
       setOriginalUrl(song.url);
       setCompareSearchResults([]);
-      analyzeUrl(song.url, setAnalyzingOriginal, setOriginalKey);
+      analyzeWithPitchForCompare(song.url, setAnalyzingOriginal, setOriginalKey, setOriginalPitch);
       // 原曲選択後 → カバー曲検索に自動切替
       setCompareTarget("cover");
     } else {
       setCoverUrl(song.url);
       setCompareSearchResults([]);
-      analyzeUrl(song.url, setAnalyzingCover, setCoverKey);
+      analyzeWithPitchForCompare(song.url, setAnalyzingCover, setCoverKey, setCoverPitch);
       // カバー曲選択後 → 原曲検索に自動切替
       setCompareTarget("original");
     }
@@ -582,6 +631,33 @@ export default function Home() {
               />
             )}
 
+            {/* セクション切替 */}
+            <div className="mt-4 flex items-center gap-2">
+              <span className="text-sm text-zinc-400">解析区間:</span>
+              <div className="flex bg-white/5 rounded-lg p-0.5 border border-white/10">
+                <button
+                  onClick={() => setPitchSection("intro")}
+                  className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                    pitchSection === "intro"
+                      ? "bg-purple-600 text-white"
+                      : "text-zinc-400 hover:text-white"
+                  }`}
+                >
+                  冒頭
+                </button>
+                <button
+                  onClick={() => setPitchSection("chorus")}
+                  className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                    pitchSection === "chorus"
+                      ? "bg-purple-600 text-white"
+                      : "text-zinc-400 hover:text-white"
+                  }`}
+                >
+                  サビ
+                </button>
+              </div>
+            </div>
+
             {/* 音程バー表示 */}
             {(songPitch || voicePitch) && (
               <section className="mt-6 bg-white/5 rounded-2xl p-6 border border-white/10">
@@ -599,6 +675,7 @@ export default function Home() {
                         duration={songPitch.duration}
                         color="#a855f7"
                         label="原曲の音程"
+                        startTime={songPitch.start_time}
                       />
                     )}
                     {voicePitch && (
@@ -725,6 +802,38 @@ export default function Home() {
                 keyA={originalKey!.key}
                 keyB={coverKey!.key}
               />
+            )}
+
+            {/* 比較タブの音程バー表示 */}
+            {(originalPitch || coverPitch) && (
+              <section className="mt-6 bg-white/5 rounded-2xl p-6 border border-white/10">
+                <h2 className="text-lg font-semibold mb-2">🎼 音程バー</h2>
+                {originalPitch && coverPitch ? (
+                  <PitchCompare
+                    original={{ pitches: originalPitch.pitches, duration: originalPitch.duration }}
+                    user={{ pitches: coverPitch.pitches, duration: coverPitch.duration }}
+                  />
+                ) : (
+                  <>
+                    {originalPitch && (
+                      <PitchBar
+                        pitches={originalPitch.pitches}
+                        duration={originalPitch.duration}
+                        color="#a855f7"
+                        label="原曲の音程"
+                      />
+                    )}
+                    {coverPitch && (
+                      <PitchBar
+                        pitches={coverPitch.pitches}
+                        duration={coverPitch.duration}
+                        color="#3b82f6"
+                        label="カバー曲の音程"
+                      />
+                    )}
+                  </>
+                )}
+              </section>
             )}
           </>
         )}
