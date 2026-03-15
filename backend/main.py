@@ -2,14 +2,33 @@ import os
 import json
 import tempfile
 import subprocess
+import base64
 import numpy as np
 import librosa
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
+from contextlib import asynccontextmanager
 
-app = FastAPI(title="Karaoke Key Analyzer")
+COOKIES_PATH = "/tmp/yt_cookies.txt"
+
+
+def restore_cookies():
+    """環境変数からcookies.txtを復元する"""
+    b64 = os.environ.get("YT_COOKIES_B64")
+    if b64:
+        with open(COOKIES_PATH, "w") as f:
+            f.write(base64.b64decode(b64).decode("utf-8"))
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    restore_cookies()
+    yield
+
+
+app = FastAPI(title="Karaoke Key Analyzer", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
