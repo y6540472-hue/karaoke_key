@@ -36,35 +36,51 @@ def get_env():
 
 
 def download_youtube_audio(url: str, output_path: str) -> None:
-    """YouTubeから音声をダウンロードする（bot検知回避オプション付き）"""
-    try:
-        result = subprocess.run(
-            [
-                YT_DLP_PATH,
-                "-x",
-                "--audio-format", "wav",
-                "--audio-quality", "0",
-                "-o", output_path,
-                "--no-playlist",
-                "--extractor-args", "youtube:player_client=android_creator",
-                url,
-            ],
-            capture_output=True,
-            text=True,
-            timeout=120,
-            env=get_env(),
-        )
-    except FileNotFoundError:
-        raise HTTPException(status_code=500, detail="yt-dlpが見つかりません")
-    except subprocess.TimeoutExpired:
-        raise HTTPException(status_code=408, detail="タイムアウトしました")
+    """YouTubeから音声をダウンロードする（複数クライアントでリトライ）"""
+    base_args = [
+        YT_DLP_PATH,
+        "-x",
+        "--audio-format", "wav",
+        "--audio-quality", "0",
+        "-o", output_path,
+        "--no-playlist",
+    ]
 
-    if result.returncode != 0:
-        error_msg = (result.stderr or "") + (result.stdout or "")
-        raise HTTPException(
-            status_code=400,
-            detail=f"YouTube音声の取得に失敗しました: {error_msg[:300]}",
-        )
+    # 複数のクライアントを試す
+    client_options = [
+        ["--extractor-args", "youtube:player_client=web"],
+        [],  # デフォルト（フォールバック）
+    ]
+
+    last_error = ""
+    for extra_args in client_options:
+        try:
+            result = subprocess.run(
+                base_args + extra_args + [url],
+                capture_output=True,
+                text=True,
+                timeout=120,
+                env=get_env(),
+            )
+        except FileNotFoundError:
+            raise HTTPException(status_code=500, detail="yt-dlpが見つかりません")
+        except subprocess.TimeoutExpired:
+            raise HTTPException(status_code=408, detail="タイムアウトしました")
+
+        if result.returncode == 0:
+            return  # 成功
+        last_error = (result.stderr or "") + (result.stdout or "")
+
+        # ダウンロード失敗したファイルを掃除
+        import glob
+        dir_path = os.path.dirname(output_path)
+        for f in glob.glob(os.path.join(dir_path, "*")):
+            os.remove(f)
+
+    raise HTTPException(
+        status_code=400,
+        detail=f"YouTube音声の取得に失敗しました: {last_error[:300]}",
+    )
 
 
 class YouTubeRequest(BaseModel):
