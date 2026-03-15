@@ -78,6 +78,7 @@ export default function Home() {
   const [originalPitch, setOriginalPitch] = useState<PitchResult | null>(null);
   const [coverPitch, setCoverPitch] = useState<PitchResult | null>(null);
   const [compareTarget, setCompareTarget] = useState<"original" | "cover">("original");
+  const [comparePitchSection, setComparePitchSection] = useState<"intro" | "chorus">("chorus");
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
@@ -171,7 +172,7 @@ export default function Home() {
         fetch(`${API_BASE}/api/pitch-youtube`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ url }),
+          body: JSON.stringify({ url, section: comparePitchSection }),
         }),
       ]);
 
@@ -807,7 +808,34 @@ export default function Home() {
             {/* 比較タブの音程バー表示 */}
             {(originalPitch || coverPitch) && (
               <section className="mt-6 bg-white/5 rounded-2xl p-6 border border-white/10">
-                <h2 className="text-lg font-semibold mb-2">🎼 音程バー</h2>
+                <div className="flex items-center justify-between mb-2">
+                  <h2 className="text-lg font-semibold">🎼 音程バー</h2>
+                  <div className="flex bg-white/10 rounded-lg p-0.5 text-xs">
+                    <button
+                      onClick={() => setComparePitchSection("intro")}
+                      className={`px-3 py-1 rounded-md transition-colors ${
+                        comparePitchSection === "intro"
+                          ? "bg-blue-600 text-white"
+                          : "text-zinc-400 hover:text-white"
+                      }`}
+                    >
+                      冒頭
+                    </button>
+                    <button
+                      onClick={() => setComparePitchSection("chorus")}
+                      className={`px-3 py-1 rounded-md transition-colors ${
+                        comparePitchSection === "chorus"
+                          ? "bg-blue-600 text-white"
+                          : "text-zinc-400 hover:text-white"
+                      }`}
+                    >
+                      サビ
+                    </button>
+                  </div>
+                </div>
+                <p className="text-xs text-zinc-500 mb-3">
+                  {comparePitchSection === "chorus" ? "サビ付近" : "冒頭"}の30秒間を比較しています
+                </p>
                 {originalPitch && coverPitch ? (
                   <PitchCompare
                     original={{ pitches: originalPitch.pitches, duration: originalPitch.duration }}
