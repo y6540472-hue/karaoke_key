@@ -11,9 +11,13 @@ from typing import Optional
 
 app = FastAPI(title="Karaoke Key Analyzer")
 
+ALLOWED_ORIGINS = os.environ.get(
+    "ALLOWED_ORIGINS", "http://localhost:3000"
+).split(",")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -22,7 +26,9 @@ app.add_middleware(
 KEY_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 
 
-YT_DLP_PATH = "/opt/homebrew/bin/yt-dlp"
+import shutil
+
+YT_DLP_PATH = shutil.which("yt-dlp") or "/opt/homebrew/bin/yt-dlp"
 
 
 def get_env():
