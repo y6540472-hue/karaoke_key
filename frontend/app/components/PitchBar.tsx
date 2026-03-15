@@ -18,6 +18,7 @@ type PitchBarProps = {
 type PitchCompareProps = {
   original: { pitches: PitchPoint[]; duration: number };
   user: { pitches: PitchPoint[]; duration: number };
+  userLabel?: string;
 };
 
 // 音程バー（単体）
@@ -112,7 +113,7 @@ export function PitchBar({
 }
 
 // 2つの音程バーを重ねて比較
-export function PitchCompare({ original, user }: PitchCompareProps) {
+export function PitchCompare({ original, user, userLabel = "あなた" }: PitchCompareProps) {
   const origVoiced = original.pitches.filter((p) => p.midi !== null);
   const userVoiced = user.pitches.filter((p) => p.midi !== null);
 
@@ -145,7 +146,7 @@ export function PitchCompare({ original, user }: PitchCompareProps) {
           <span className="w-3 h-2 rounded-sm bg-purple-500 inline-block" /> 原曲
         </span>
         <span className="flex items-center gap-1">
-          <span className="w-3 h-2 rounded-sm bg-pink-500 inline-block" /> あなた
+          <span className="w-3 h-2 rounded-sm bg-pink-500 inline-block" /> {userLabel}
         </span>
       </div>
       <div className="relative bg-white/5 border border-white/10 rounded-lg overflow-hidden h-40">

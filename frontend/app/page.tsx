@@ -812,6 +812,7 @@ export default function Home() {
                   <PitchCompare
                     original={{ pitches: originalPitch.pitches, duration: originalPitch.duration }}
                     user={{ pitches: coverPitch.pitches, duration: coverPitch.duration }}
+                    userLabel="カバー曲"
                   />
                 ) : (
                   <>
