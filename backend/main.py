@@ -8,6 +8,8 @@ from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
+import warnings
+warnings.filterwarnings("ignore")
 
 app = FastAPI(title="Karaoke Key Analyzer")
 
@@ -96,6 +98,19 @@ class KeyDiffResult(BaseModel):
     recommendation: str
 
 
+class PitchPoint(BaseModel):
+    time: float
+    note: Optional[str] = None
+    midi: Optional[float] = None
+    frequency: Optional[float] = None
+
+
+class PitchResult(BaseModel):
+    key: KeyResult
+    pitches: list[PitchPoint]
+    duration: float
+
+
 def detect_key(audio_path: str) -> KeyResult:
     """音声ファイルからキー（調）を検出する"""
     y, sr = librosa.load(audio_path, sr=22050, duration=60)
@@ -141,6 +156,49 @@ def detect_key(audio_path: str) -> KeyResult:
             mode="minor",
             confidence=round(float(best_minor_corr), 3),
         )
+
+
+NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+
+
+def midi_to_note_name(midi_num: float) -> str:
+    """MIDIノート番号を音名に変換（例: 60 → C4）"""
+    note_idx = int(round(midi_num)) % 12
+    octave = int(round(midi_num)) // 12 - 1
+    return f"{NOTE_NAMES[note_idx]}{octave}"
+
+
+def detect_pitch_timeline(audio_path: str, max_duration: float = 30.0) -> PitchResult:
+    """音声からピッチの時系列データを抽出する"""
+    y, sr = librosa.load(audio_path, sr=22050, duration=max_duration)
+    duration = float(len(y) / sr)
+
+    # pYINでピッチ検出（声に特化した手法）
+    f0, voiced_flag, _ = librosa.pyin(
+        y, fmin=librosa.note_to_hz("C2"), fmax=librosa.note_to_hz("C6"), sr=sr
+    )
+    times = librosa.times_like(f0, sr=sr)
+
+    # 間引き（表示用に最大200ポイントに）
+    step = max(1, len(times) // 200)
+
+    pitches: list[PitchPoint] = []
+    for i in range(0, len(times), step):
+        t = round(float(times[i]), 3)
+        if voiced_flag[i] and f0[i] is not None and not np.isnan(f0[i]):
+            freq = float(f0[i])
+            midi = float(librosa.hz_to_midi(freq))
+            pitches.append(PitchPoint(
+                time=t,
+                note=midi_to_note_name(midi),
+                midi=round(midi, 1),
+                frequency=round(freq, 1),
+            ))
+        else:
+            pitches.append(PitchPoint(time=t))
+
+    key = detect_key(audio_path)
+    return PitchResult(key=key, pitches=pitches, duration=round(duration, 2))
 
 
 def calculate_semitone_diff(original: KeyResult, user: KeyResult) -> int:
@@ -253,6 +311,35 @@ async def search_youtube(q: str, count: int = 10):
             continue
 
     return results
+
+
+@app.post("/api/pitch-youtube", response_model=PitchResult)
+async def pitch_youtube(request: YouTubeRequest):
+    """YouTubeリンクから音程の時系列データを取得する"""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        output_path = os.path.join(tmpdir, "audio.wav")
+        download_youtube_audio(request.url, output_path)
+
+        actual_files = [f for f in os.listdir(tmpdir)]
+        if not actual_files:
+            raise HTTPException(status_code=500, detail="音声ファイルが見つかりません")
+
+        actual_path = os.path.join(tmpdir, actual_files[0])
+        return detect_pitch_timeline(actual_path)
+
+
+@app.post("/api/pitch-voice", response_model=PitchResult)
+async def pitch_voice(file: UploadFile = File(...)):
+    """マイク録音した音声から音程の時系列データを取得する"""
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+        content = await file.read()
+        tmp.write(content)
+        tmp_path = tmp.name
+
+    try:
+        return detect_pitch_timeline(tmp_path)
+    finally:
+        os.unlink(tmp_path)
 
 
 @app.get("/api/health")

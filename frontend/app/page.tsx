@@ -1,8 +1,22 @@
 "use client";
 
 import { useState, useRef, useCallback, useEffect } from "react";
+import { PitchBar, PitchCompare } from "./components/PitchBar";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000";
+
+type PitchPoint = {
+  time: number;
+  note: string | null;
+  midi: number | null;
+  frequency: number | null;
+};
+
+type PitchResult = {
+  key: KeyResult;
+  pitches: PitchPoint[];
+  duration: number;
+};
 
 type KeyResult = {
   key: string;
@@ -41,7 +55,10 @@ export default function Home() {
   const [analyzingYoutube, setAnalyzingYoutube] = useState(false);
   const [selectedSong, setSelectedSong] = useState<SearchResult | null>(null);
 
+  const [songPitch, setSongPitch] = useState<PitchResult | null>(null);
+
   const [voiceKey, setVoiceKey] = useState<KeyResult | null>(null);
+  const [voicePitch, setVoicePitch] = useState<PitchResult | null>(null);
   const [recording, setRecording] = useState(false);
   const [analyzingVoice, setAnalyzingVoice] = useState(false);
 
@@ -91,11 +108,39 @@ export default function Home() {
     }
   };
 
+  // YouTube音程解析（キー解析 + ピッチデータ）
+  const analyzeWithPitch = async (url: string) => {
+    if (!url.trim()) return;
+    setError("");
+    setAnalyzingYoutube(true);
+    setSongKey(null);
+    setSongPitch(null);
+
+    try {
+      const res = await fetch(`${API_BASE}/api/pitch-youtube`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.detail || "解析に失敗しました");
+      }
+      const data: PitchResult = await res.json();
+      setSongKey(data.key);
+      setSongPitch(data);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "エラーが発生しました");
+    } finally {
+      setAnalyzingYoutube(false);
+    }
+  };
+
   // URLペースト時の自動解析（解析タブ）
   const handleUrlChange = (value: string) => {
     setYoutubeUrl(value);
     if (isYoutubeUrl(value)) {
-      analyzeUrl(value, setAnalyzingYoutube, setSongKey);
+      analyzeWithPitch(value);
     }
   };
 
@@ -158,7 +203,7 @@ export default function Home() {
     setSelectedSong(song);
     setYoutubeUrl(song.url);
     setSearchResults([]);
-    analyzeUrl(song.url, setAnalyzingYoutube, setSongKey);
+    analyzeWithPitch(song.url);
   };
 
   // 検索結果から曲を選択（比較タブ）
@@ -210,7 +255,7 @@ export default function Home() {
       formData.append("file", blob, "recording.webm");
 
       try {
-        const res = await fetch(`${API_BASE}/api/analyze-voice`, {
+        const res = await fetch(`${API_BASE}/api/pitch-voice`, {
           method: "POST",
           body: formData,
         });
@@ -218,8 +263,9 @@ export default function Home() {
           const data = await res.json();
           throw new Error(data.detail || "解析に失敗しました");
         }
-        const data: KeyResult = await res.json();
-        setVoiceKey(data);
+        const data: PitchResult = await res.json();
+        setVoiceKey(data.key);
+        setVoicePitch(data);
       } catch (e) {
         setError(e instanceof Error ? e.message : "エラーが発生しました");
       } finally {
@@ -534,6 +580,38 @@ export default function Home() {
                 keyA={songKey!.key}
                 keyB={voiceKey!.key}
               />
+            )}
+
+            {/* 音程バー表示 */}
+            {(songPitch || voicePitch) && (
+              <section className="mt-6 bg-white/5 rounded-2xl p-6 border border-white/10">
+                <h2 className="text-lg font-semibold mb-2">🎼 音程バー</h2>
+                {songPitch && voicePitch ? (
+                  <PitchCompare
+                    original={{ pitches: songPitch.pitches, duration: songPitch.duration }}
+                    user={{ pitches: voicePitch.pitches, duration: voicePitch.duration }}
+                  />
+                ) : (
+                  <>
+                    {songPitch && (
+                      <PitchBar
+                        pitches={songPitch.pitches}
+                        duration={songPitch.duration}
+                        color="#a855f7"
+                        label="原曲の音程"
+                      />
+                    )}
+                    {voicePitch && (
+                      <PitchBar
+                        pitches={voicePitch.pitches}
+                        duration={voicePitch.duration}
+                        color="#ec4899"
+                        label="あなたの音程"
+                      />
+                    )}
+                  </>
+                )}
+              </section>
             )}
           </>
         )}
