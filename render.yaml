@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: karaoke-key-api
+    runtime: docker
+    rootDir: backend
+    dockerfilePath: ./Dockerfile
+    branch: dev
+    plan: free
+    envVars:
+      - key: ALLOWED_ORIGINS
+        value: "*"
