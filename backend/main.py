@@ -33,6 +33,38 @@ def get_env():
     return env
 
 
+def download_youtube_audio(url: str, output_path: str) -> None:
+    """YouTubeから音声をダウンロードする（bot検知回避オプション付き）"""
+    try:
+        result = subprocess.run(
+            [
+                YT_DLP_PATH,
+                "-x",
+                "--audio-format", "wav",
+                "--audio-quality", "0",
+                "-o", output_path,
+                "--no-playlist",
+                "--extractor-args", "youtube:player_client=android_creator",
+                url,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            env=get_env(),
+        )
+    except FileNotFoundError:
+        raise HTTPException(status_code=500, detail="yt-dlpが見つかりません")
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=408, detail="タイムアウトしました")
+
+    if result.returncode != 0:
+        error_msg = (result.stderr or "") + (result.stdout or "")
+        raise HTTPException(
+            status_code=400,
+            detail=f"YouTube音声の取得に失敗しました: {error_msg[:300]}",
+        )
+
+
 class YouTubeRequest(BaseModel):
     url: str
 
@@ -127,46 +159,14 @@ async def analyze_youtube(request: YouTubeRequest):
     """YouTubeリンクから曲のキーを解析する"""
     with tempfile.TemporaryDirectory() as tmpdir:
         output_path = os.path.join(tmpdir, "audio.wav")
-        try:
-            result = subprocess.run(
-                [
-                    YT_DLP_PATH,
-                    "-x",
-                    "--audio-format", "wav",
-                    "--audio-quality", "0",
-                    "-o", output_path,
-                    "--no-playlist",
-                    request.url,
-                ],
-                capture_output=True,
-                text=True,
-                timeout=120,
-                env=get_env(),
-            )
-        except FileNotFoundError:
-            raise HTTPException(
-                status_code=500,
-                detail="yt-dlpが見つかりません",
-            )
-        except subprocess.TimeoutExpired:
-            raise HTTPException(status_code=408, detail="タイムアウトしました")
+        download_youtube_audio(request.url, output_path)
 
-        # yt-dlpのエラーチェック
-        if result.returncode != 0:
-            error_msg = (result.stderr or "") + (result.stdout or "")
-            raise HTTPException(
-                status_code=400,
-                detail=f"YouTube音声の取得に失敗しました: {error_msg[:300]}",
-            )
-
-        # yt-dlp が拡張子を変えることがあるので全ファイルから探す
         actual_files = [f for f in os.listdir(tmpdir)]
         if not actual_files:
             raise HTTPException(status_code=500, detail="音声ファイルが見つかりません")
 
         actual_path = os.path.join(tmpdir, actual_files[0])
-        key_result = detect_key(actual_path)
-        return key_result
+        return detect_key(actual_path)
 
 
 @app.post("/api/analyze-voice", response_model=KeyResult)
