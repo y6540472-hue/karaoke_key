@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000";
 
@@ -20,23 +20,23 @@ type SearchResult = {
   duration: string | null;
 };
 
-// タブの種類
 type Tab = "analyze" | "compare";
-// 曲入力の方法
-type InputMode = "url" | "search";
+
+// YouTubeのURLかどうかを判定
+function isYoutubeUrl(text: string): boolean {
+  return /^https?:\/\/(www\.)?(youtube\.com\/watch|youtu\.be\/)/.test(text.trim());
+}
 
 export default function Home() {
   const [tab, setTab] = useState<Tab>("analyze");
-
-  // --- 共通 ---
   const [error, setError] = useState("");
 
   // --- 解析タブ ---
-  const [inputMode, setInputMode] = useState<InputMode>("url");
   const [youtubeUrl, setYoutubeUrl] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [searching, setSearching] = useState(false);
+  const [searchCount, setSearchCount] = useState(10);
   const [songKey, setSongKey] = useState<KeyResult | null>(null);
   const [analyzingYoutube, setAnalyzingYoutube] = useState(false);
   const [selectedSong, setSelectedSong] = useState<SearchResult | null>(null);
@@ -52,10 +52,10 @@ export default function Home() {
   const [coverKey, setCoverKey] = useState<KeyResult | null>(null);
   const [analyzingOriginal, setAnalyzingOriginal] = useState(false);
   const [analyzingCover, setAnalyzingCover] = useState(false);
-  // 比較タブでも検索を使えるように
   const [compareSearchQuery, setCompareSearchQuery] = useState("");
   const [compareSearchResults, setCompareSearchResults] = useState<SearchResult[]>([]);
   const [compareSearching, setCompareSearching] = useState(false);
+  const [compareSearchCount, setCompareSearchCount] = useState(10);
   const [compareTarget, setCompareTarget] = useState<"original" | "cover">("original");
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -91,20 +91,44 @@ export default function Home() {
     }
   };
 
+  // URLペースト時の自動解析（解析タブ）
+  const handleUrlChange = (value: string) => {
+    setYoutubeUrl(value);
+    if (isYoutubeUrl(value)) {
+      analyzeUrl(value, setAnalyzingYoutube, setSongKey);
+    }
+  };
+
+  // URLペースト時の自動解析（比較タブ - 原曲）
+  const handleOriginalUrlChange = (value: string) => {
+    setOriginalUrl(value);
+    if (isYoutubeUrl(value)) {
+      analyzeUrl(value, setAnalyzingOriginal, setOriginalKey);
+    }
+  };
+
+  // URLペースト時の自動解析（比較タブ - カバー曲）
+  const handleCoverUrlChange = (value: string) => {
+    setCoverUrl(value);
+    if (isYoutubeUrl(value)) {
+      analyzeUrl(value, setAnalyzingCover, setCoverKey);
+    }
+  };
+
   // YouTube検索
   const searchYoutube = async (
     query: string,
+    count: number,
     setLoading: (v: boolean) => void,
     setResults: (v: SearchResult[]) => void
   ) => {
     if (!query.trim()) return;
     setError("");
     setLoading(true);
-    setResults([]);
 
     try {
       const res = await fetch(
-        `${API_BASE}/api/search?q=${encodeURIComponent(query)}`
+        `${API_BASE}/api/search?q=${encodeURIComponent(query)}&count=${count}`
       );
       if (!res.ok) throw new Error("検索に失敗しました");
       const data: SearchResult[] = await res.json();
@@ -116,23 +140,43 @@ export default function Home() {
     }
   };
 
+  // 「もっと見る」
+  const loadMore = (
+    query: string,
+    currentCount: number,
+    setCount: (v: number) => void,
+    setLoading: (v: boolean) => void,
+    setResults: (v: SearchResult[]) => void
+  ) => {
+    const newCount = currentCount + 10;
+    setCount(newCount);
+    searchYoutube(query, newCount, setLoading, setResults);
+  };
+
   // 検索結果から曲を選択（解析タブ）
   const selectSong = (song: SearchResult) => {
     setSelectedSong(song);
     setYoutubeUrl(song.url);
     setSearchResults([]);
-    setSearchQuery("");
+    analyzeUrl(song.url, setAnalyzingYoutube, setSongKey);
   };
 
   // 検索結果から曲を選択（比較タブ）
   const selectCompareSong = (song: SearchResult) => {
     if (compareTarget === "original") {
       setOriginalUrl(song.url);
+      setCompareSearchResults([]);
+      analyzeUrl(song.url, setAnalyzingOriginal, setOriginalKey);
+      // 原曲選択後 → カバー曲検索に自動切替
+      setCompareTarget("cover");
     } else {
       setCoverUrl(song.url);
+      setCompareSearchResults([]);
+      analyzeUrl(song.url, setAnalyzingCover, setCoverKey);
+      // カバー曲選択後 → 原曲検索に自動切替
+      setCompareTarget("original");
     }
-    setCompareSearchResults([]);
-    setCompareSearchQuery("");
+    // 検索キーワードはそのまま残す
   };
 
   // マイク録音開始
@@ -214,11 +258,23 @@ export default function Home() {
   const SearchResultList = ({
     results,
     onSelect,
+    query,
+    currentCount,
+    setCount,
+    setLoading,
+    setResults,
+    loading,
   }: {
     results: SearchResult[];
     onSelect: (s: SearchResult) => void;
+    query: string;
+    currentCount: number;
+    setCount: (v: number) => void;
+    setLoading: (v: boolean) => void;
+    setResults: (v: SearchResult[]) => void;
+    loading: boolean;
   }) => (
-    <div className="mt-3 max-h-80 overflow-y-auto space-y-2">
+    <div className="mt-3 max-h-96 overflow-y-auto space-y-2">
       {results.map((r) => (
         <button
           key={r.id}
@@ -239,6 +295,17 @@ export default function Home() {
           </div>
         </button>
       ))}
+      {results.length >= currentCount && (
+        <button
+          onClick={() =>
+            loadMore(query, currentCount, setCount, setLoading, setResults)
+          }
+          disabled={loading}
+          className="w-full py-3 text-sm text-zinc-400 hover:text-white bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg transition-colors disabled:opacity-50"
+        >
+          {loading ? "読み込み中..." : "もっと見る"}
+        </button>
+      )}
     </div>
   );
 
@@ -309,7 +376,7 @@ export default function Home() {
   );
 
   return (
-    <div className="min-h-screen p-6 flex flex-col items-center">
+    <div className="min-h-screen p-4 sm:p-6 flex flex-col items-center">
       <div className="w-full max-w-lg">
         {/* ヘッダー */}
         <div className="text-center mb-8">
@@ -346,7 +413,6 @@ export default function Home() {
         {/* ======== 解析タブ ======== */}
         {tab === "analyze" && (
           <>
-            {/* ステップ1 */}
             <section className="mb-6 bg-white/5 rounded-2xl p-6 border border-white/10">
               <h2 className="text-lg font-semibold mb-1 flex items-center gap-2">
                 <span className="bg-purple-600 text-white text-xs font-bold w-6 h-6 rounded-full flex items-center justify-center">
@@ -355,94 +421,49 @@ export default function Home() {
                 歌いたい曲を入力
               </h2>
 
-              {/* URL / 検索 切替 */}
-              <div className="flex gap-2 mt-3 mb-4">
-                <button
-                  onClick={() => setInputMode("url")}
-                  className={`text-xs px-3 py-1.5 rounded-full border transition-colors ${
-                    inputMode === "url"
-                      ? "bg-purple-600/30 border-purple-500 text-purple-300"
-                      : "border-white/20 text-zinc-400 hover:text-white"
-                  }`}
-                >
-                  URLを貼る
-                </button>
-                <button
-                  onClick={() => setInputMode("search")}
-                  className={`text-xs px-3 py-1.5 rounded-full border transition-colors ${
-                    inputMode === "search"
-                      ? "bg-purple-600/30 border-purple-500 text-purple-300"
-                      : "border-white/20 text-zinc-400 hover:text-white"
-                  }`}
-                >
-                  曲を検索
-                </button>
-              </div>
-
-              {inputMode === "url" ? (
+              {/* 検索（メイン） */}
+              <div className="mt-3">
                 <div className="flex gap-2">
                   <input
-                    type="url"
-                    placeholder="https://www.youtube.com/watch?v=..."
-                    value={youtubeUrl}
-                    onChange={(e) => setYoutubeUrl(e.target.value)}
+                    type="text"
+                    placeholder="曲名やアーティスト名で検索..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        setSearchCount(10);
+                        searchYoutube(searchQuery, 10, setSearching, setSearchResults);
+                      }
+                    }}
                     className="flex-1 bg-white/10 border border-white/20 rounded-lg px-4 py-3 text-sm placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-purple-500"
                   />
                   <button
-                    onClick={() =>
-                      analyzeUrl(youtubeUrl, setAnalyzingYoutube, setSongKey)
-                    }
-                    disabled={analyzingYoutube || !youtubeUrl.trim()}
+                    onClick={() => {
+                      setSearchCount(10);
+                      searchYoutube(searchQuery, 10, setSearching, setSearchResults);
+                    }}
+                    disabled={searching || !searchQuery.trim()}
                     className="bg-purple-600 hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-5 py-3 rounded-lg text-sm font-medium transition-colors whitespace-nowrap"
                   >
-                    {analyzingYoutube ? "解析中..." : "解析"}
+                    {searching ? "検索中..." : "検索"}
                   </button>
                 </div>
-              ) : (
-                <>
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      placeholder="曲名やアーティスト名で検索..."
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter")
-                          searchYoutube(
-                            searchQuery,
-                            setSearching,
-                            setSearchResults
-                          );
-                      }}
-                      className="flex-1 bg-white/10 border border-white/20 rounded-lg px-4 py-3 text-sm placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-purple-500"
-                    />
-                    <button
-                      onClick={() =>
-                        searchYoutube(
-                          searchQuery,
-                          setSearching,
-                          setSearchResults
-                        )
-                      }
-                      disabled={searching || !searchQuery.trim()}
-                      className="bg-purple-600 hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-5 py-3 rounded-lg text-sm font-medium transition-colors whitespace-nowrap"
-                    >
-                      {searching ? "検索中..." : "検索"}
-                    </button>
-                  </div>
-                  {searchResults.length > 0 && (
-                    <SearchResultList
-                      results={searchResults}
-                      onSelect={(s) => {
-                        selectSong(s);
-                        analyzeUrl(s.url, setAnalyzingYoutube, setSongKey);
-                      }}
-                    />
-                  )}
-                </>
-              )}
+                {searchResults.length > 0 && (
+                  <SearchResultList
+                    results={searchResults}
+                    onSelect={selectSong}
+                    query={searchQuery}
+                    currentCount={searchCount}
+                    setCount={setSearchCount}
+                    setLoading={setSearching}
+                    setResults={setSearchResults}
+                    loading={searching}
+                  />
+                )}
+              </div>
 
-              {selectedSong && inputMode === "search" && (
+              {/* 選択済みの曲 */}
+              {selectedSong && (
                 <div className="mt-3 flex items-center gap-3 bg-white/5 rounded-lg p-2">
                   <img
                     src={selectedSong.thumbnail}
@@ -455,6 +476,21 @@ export default function Home() {
                 </div>
               )}
 
+              {/* URL入力（サブ） */}
+              <div className="mt-4 border-t border-white/10 pt-4">
+                <p className="text-xs text-zinc-400 mb-2">またはYouTubeリンクを貼り付け</p>
+                <input
+                  type="url"
+                  placeholder="https://www.youtube.com/watch?v=..."
+                  value={youtubeUrl}
+                  onChange={(e) => handleUrlChange(e.target.value)}
+                  className="w-full bg-white/10 border border-white/20 rounded-lg px-4 py-3 text-sm placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                />
+              </div>
+
+              {analyzingYoutube && (
+                <p className="mt-3 text-sm text-purple-300 animate-pulse">解析中...</p>
+              )}
               {songKey && <KeyDisplay label="原曲のキー" result={songKey} color="purple" />}
             </section>
 
@@ -489,7 +525,6 @@ export default function Home() {
               )}
             </section>
 
-            {/* 結果 */}
             {keyDiff && (
               <DiffDisplay
                 diff={keyDiff.diff}
@@ -508,99 +543,50 @@ export default function Home() {
           <>
             <section className="mb-6 bg-white/5 rounded-2xl p-6 border border-white/10">
               <h2 className="text-lg font-semibold mb-4">原曲とカバー曲のキーを比較</h2>
-              <p className="text-zinc-400 text-xs mb-4">
-                原曲とカバー曲のYouTubeリンクを入力すると、キーの差を計算します
-              </p>
 
-              {/* 原曲 */}
-              <label className="text-sm text-zinc-300 mb-1 block">原曲</label>
-              <div className="flex gap-2 mb-4">
-                <input
-                  type="url"
-                  placeholder="原曲のYouTubeリンク"
-                  value={originalUrl}
-                  onChange={(e) => setOriginalUrl(e.target.value)}
-                  className="flex-1 bg-white/10 border border-white/20 rounded-lg px-4 py-3 text-sm placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-purple-500"
-                />
-                <button
-                  onClick={() =>
-                    analyzeUrl(originalUrl, setAnalyzingOriginal, setOriginalKey)
+              {/* 検索セクション（上部） */}
+              <div className="mb-6">
+                <select
+                  value={compareTarget}
+                  onChange={(e) =>
+                    setCompareTarget(e.target.value as "original" | "cover")
                   }
-                  disabled={analyzingOriginal || !originalUrl.trim()}
-                  className="bg-purple-600 hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-4 py-3 rounded-lg text-sm font-medium transition-colors whitespace-nowrap"
+                  className="w-full bg-white/10 border border-white/20 rounded-lg px-3 py-2.5 text-sm text-zinc-300 mb-2"
                 >
-                  {analyzingOriginal ? "解析中..." : "解析"}
-                </button>
-              </div>
-              {originalKey && (
-                <KeyDisplay label="原曲のキー" result={originalKey} color="purple" />
-              )}
-
-              {/* カバー曲 */}
-              <label className="text-sm text-zinc-300 mb-1 block mt-6">
-                カバー曲
-              </label>
-              <div className="flex gap-2 mb-4">
-                <input
-                  type="url"
-                  placeholder="カバー曲のYouTubeリンク"
-                  value={coverUrl}
-                  onChange={(e) => setCoverUrl(e.target.value)}
-                  className="flex-1 bg-white/10 border border-white/20 rounded-lg px-4 py-3 text-sm placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-                <button
-                  onClick={() =>
-                    analyzeUrl(coverUrl, setAnalyzingCover, setCoverKey)
-                  }
-                  disabled={analyzingCover || !coverUrl.trim()}
-                  className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-4 py-3 rounded-lg text-sm font-medium transition-colors whitespace-nowrap"
-                >
-                  {analyzingCover ? "解析中..." : "解析"}
-                </button>
-              </div>
-              {coverKey && (
-                <KeyDisplay label="カバー曲のキー" result={coverKey} color="blue" />
-              )}
-
-              {/* 検索ヘルパー */}
-              <div className="mt-6 border-t border-white/10 pt-4">
-                <p className="text-xs text-zinc-400 mb-2">曲を検索して入力</p>
+                  <option value="original">原曲を検索</option>
+                  <option value="cover">カバー曲を検索</option>
+                </select>
                 <div className="flex gap-2 mb-2">
-                  <select
-                    value={compareTarget}
-                    onChange={(e) =>
-                      setCompareTarget(e.target.value as "original" | "cover")
-                    }
-                    className="bg-white/10 border border-white/20 rounded-lg px-3 py-2 text-sm text-zinc-300"
-                  >
-                    <option value="original">原曲に入力</option>
-                    <option value="cover">カバー曲に入力</option>
-                  </select>
                   <input
                     type="text"
                     placeholder="曲名やアーティスト名..."
                     value={compareSearchQuery}
                     onChange={(e) => setCompareSearchQuery(e.target.value)}
                     onKeyDown={(e) => {
-                      if (e.key === "Enter")
+                      if (e.key === "Enter") {
+                        setCompareSearchCount(10);
                         searchYoutube(
                           compareSearchQuery,
+                          10,
                           setCompareSearching,
                           setCompareSearchResults
                         );
+                      }
                     }}
-                    className="flex-1 bg-white/10 border border-white/20 rounded-lg px-4 py-2 text-sm placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="flex-1 bg-white/10 border border-white/20 rounded-lg px-4 py-2.5 text-sm placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
                   <button
-                    onClick={() =>
+                    onClick={() => {
+                      setCompareSearchCount(10);
                       searchYoutube(
                         compareSearchQuery,
+                        10,
                         setCompareSearching,
                         setCompareSearchResults
-                      )
-                    }
+                      );
+                    }}
                     disabled={compareSearching || !compareSearchQuery.trim()}
-                    className="bg-zinc-700 hover:bg-zinc-600 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm transition-colors"
+                    className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white px-4 py-2.5 rounded-lg text-sm font-medium transition-colors whitespace-nowrap"
                   >
                     {compareSearching ? "..." : "検索"}
                   </button>
@@ -609,12 +595,49 @@ export default function Home() {
                   <SearchResultList
                     results={compareSearchResults}
                     onSelect={selectCompareSong}
+                    query={compareSearchQuery}
+                    currentCount={compareSearchCount}
+                    setCount={setCompareSearchCount}
+                    setLoading={setCompareSearching}
+                    setResults={setCompareSearchResults}
+                    loading={compareSearching}
                   />
                 )}
               </div>
+
+              {/* 原曲 */}
+              <label className="text-sm text-zinc-300 mb-1 block">原曲</label>
+              <input
+                type="url"
+                placeholder="原曲のYouTubeリンク"
+                value={originalUrl}
+                onChange={(e) => handleOriginalUrlChange(e.target.value)}
+                className="w-full bg-white/10 border border-white/20 rounded-lg px-4 py-3 text-sm placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-purple-500 mb-2"
+              />
+              {analyzingOriginal && (
+                <p className="text-sm text-purple-300 animate-pulse mb-2">解析中...</p>
+              )}
+              {originalKey && (
+                <KeyDisplay label="原曲のキー" result={originalKey} color="purple" />
+              )}
+
+              {/* カバー曲 */}
+              <label className="text-sm text-zinc-300 mb-1 block mt-6">カバー曲</label>
+              <input
+                type="url"
+                placeholder="カバー曲のYouTubeリンク"
+                value={coverUrl}
+                onChange={(e) => handleCoverUrlChange(e.target.value)}
+                className="w-full bg-white/10 border border-white/20 rounded-lg px-4 py-3 text-sm placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-blue-500 mb-2"
+              />
+              {analyzingCover && (
+                <p className="text-sm text-blue-300 animate-pulse mb-2">解析中...</p>
+              )}
+              {coverKey && (
+                <KeyDisplay label="カバー曲のキー" result={coverKey} color="blue" />
+              )}
             </section>
 
-            {/* 比較結果 */}
             {compareDiff && (
               <DiffDisplay
                 diff={compareDiff.diff}

@@ -151,14 +151,22 @@ async def analyze_youtube(request: YouTubeRequest):
         except subprocess.TimeoutExpired:
             raise HTTPException(status_code=408, detail="タイムアウトしました")
 
-        # yt-dlp が拡張子を変えることがある
-        actual_files = [f for f in os.listdir(tmpdir) if f.startswith("audio")]
+        # yt-dlpのエラーチェック
+        if result.returncode != 0:
+            error_msg = (result.stderr or "") + (result.stdout or "")
+            raise HTTPException(
+                status_code=400,
+                detail=f"YouTube音声の取得に失敗しました: {error_msg[:300]}",
+            )
+
+        # yt-dlp が拡張子を変えることがあるので全ファイルから探す
+        actual_files = [f for f in os.listdir(tmpdir)]
         if not actual_files:
             raise HTTPException(status_code=500, detail="音声ファイルが見つかりません")
 
         actual_path = os.path.join(tmpdir, actual_files[0])
-        result = detect_key(actual_path)
-        return result
+        key_result = detect_key(actual_path)
+        return key_result
 
 
 @app.post("/api/analyze-voice", response_model=KeyResult)
@@ -197,13 +205,15 @@ async def compare_keys(original: KeyResult, user: KeyResult):
 
 
 @app.get("/api/search")
-async def search_youtube(q: str):
+async def search_youtube(q: str, count: int = 10):
     """YouTube動画を検索する（yt-dlpを使用、APIキー不要）"""
+    if count > 30:
+        count = 30
     try:
         result = subprocess.run(
             [
                 YT_DLP_PATH,
-                f"ytsearch10:{q}",
+                f"ytsearch{count}:{q}",
                 "--dump-json",
                 "--no-download",
                 "--flat-playlist",
